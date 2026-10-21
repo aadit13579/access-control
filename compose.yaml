@@ -1,0 +1,22 @@
+
+services:
+  db:
+    image: postgres:18
+    container_name: my-project-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: my_project
+      POSTGRES_USER: app_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:5437:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app_user -d my_project"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
