@@ -1,8 +1,16 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from app.database import db_pool
-from app.scripts import auth, jobs
-from app.scripts import grants
+from app.routers import (
+    auth,
+    jobs_waiting,
+    jobs_action,
+    jobs_approvals,
+    jobs_history,
+    grants_create,
+    grants_revoke,
+)
+
 
 # Manage the lifecycle of the DB connection pool
 @asynccontextmanager
@@ -19,10 +27,14 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Register routers from the scripts directory
+# Register routers
 app.include_router(auth.router)
-app.include_router(jobs.router)
-app.include_router(grants.router)
+app.include_router(jobs_waiting.router)
+app.include_router(jobs_action.router)
+app.include_router(jobs_approvals.router)
+app.include_router(jobs_history.router)
+app.include_router(grants_create.router)
+app.include_router(grants_revoke.router)
 
 @app.get("/")
 def health_check():

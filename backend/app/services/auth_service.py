@@ -1,13 +1,18 @@
-# app/scripts/auth.py
+# app/services/auth_service.py
+"""
+Canonical authorization engine.
 
-from fastapi import APIRouter, Depends, HTTPException
-from psycopg import Connection
+Used by:
+  - POST /api/auth/authorize
+  - /jobs/waiting
+  - historical authorization checks
+  - approval workflows
+
+Fail-closed: any missing condition results in denied access.
+"""
+
 from datetime import datetime, timezone
-
-from app.models import AccessCheckRequest
-from app.database import get_db
-
-router = APIRouter(prefix="/api/auth", tags=["Authorization"])
+from psycopg import Connection
 
 
 def authorize_user(
@@ -18,15 +23,10 @@ def authorize_user(
     as_of: datetime | None = None
 ):
     """
-    Canonical authorization function.
+    Evaluate whether `user_id` is permitted to perform `action` on
+    `job_id` at `as_of` (defaults to now-UTC).
 
-    Used by:
-      - POST /api/auth/authorize
-      - /jobs/waiting
-      - historical authorization checks
-      - future mutation APIs
-
-    Fail-closed: any missing condition results in denied access.
+    Returns a dict with at minimum ``allowed`` and ``reason`` keys.
     """
 
     if as_of is None:
@@ -305,18 +305,3 @@ def authorize_user(
             "job_stage": job["stage"],
             "as_of": as_of
         }
-
-
-@router.post("/authorize")
-def check_access(
-    payload: AccessCheckRequest,
-    db: Connection = Depends(get_db)
-):
-    result = authorize_user(
-        db=db,
-        user_id=payload.user_id,
-        action=payload.action,
-        job_id=payload.job_id
-    )
-
-    return result
