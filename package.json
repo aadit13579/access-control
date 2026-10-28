@@ -1,0 +1,6 @@
+{
+  "name": "access-control-service",
+  "scripts": {
+    "dev": "cd backend && docker compose up -d && cd .. && concurrently \"cd backend && ..\\myvenv\\Scripts\\activate && uvicorn app.main:app --reload --port 8000\" \"cd frontend && npm run dev\""
+  }
+}
