@@ -1,52 +1,28 @@
-# ── Environment & Secrets ─────────────────────────────────────────────────────
+# Environment & Secrets
 .env
 .env.*
 !.env.example
+*.local
 
-# ── Python ────────────────────────────────────────────────────────────────────
+# Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.pyo
-*.egg
-*.egg-info/
-dist/
-build/
+*.pyc
 
-# ── Virtual Environments ──────────────────────────────────────────────────────
+# Virtual Environments
 myvenv/
 .venv/
 venv/
-env/
 
-# ── Testing & Coverage ────────────────────────────────────────────────────────
-.pytest_cache/
-.coverage
-htmlcov/
+# Node & Frontend
+node_modules/
+dist/
+npm-debug.log*
 
-# ── Type Checking ─────────────────────────────────────────────────────────────
-.mypy_cache/
-.pyright/
-
-# ── IDE & Editor ──────────────────────────────────────────────────────────────
+# IDE & OS
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
-
-# ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 
-# ── Docker ────────────────────────────────────────────────────────────────────
-# (compose.yaml is intentionally tracked)
-docker-compose.override.yml
-
-# ── Logs ──────────────────────────────────────────────────────────────────────
+# Logs
 *.log
-
-# ── Database ──────────────────────────────────────────────────────────────────
-# SQL seed/migration files are intentionally tracked under database/
-*.sqlite3
-*.db

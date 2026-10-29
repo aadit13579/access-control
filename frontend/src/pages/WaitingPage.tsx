@@ -1,203 +1,122 @@
-import { useEffect, useState } from 'react';
-
-import {
-  Dropdown,
-  DataTable,
-  Table,
-  TableHead,
-  TableRow,
-  TableHeader,
-  TableBody,
-  TableCell,
-  TableContainer,
-  InlineLoading,
-  InlineNotification,
-  Tag,
-} from '@carbon/react';
+import { useNavigate } from 'react-router-dom';
+import { Dropdown, InlineLoading, InlineNotification } from '@carbon/react';
 
 import { useUser } from '../context/UserContext';
+import { useActions } from '../hooks/useActions';
+import { useWaitingJobs } from '../hooks/useWaitingJobs';
+import { JobsTable } from '../components/JobsTable';
 
-type WaitingJob = {
-  id: number;
-  ref: string;
-  client_id: number;
-  branch_id: number;
-  direction: string;
-  mode: string;
-  stage: string;
-  grant_id: number;
-  role_code: string;
-};
-
-type WaitingResponse = {
-  user_id: number;
-  action: string;
-  count: number;
-  jobs: WaitingJob[];
-};
-
-const actions = [
-  'prepare',
-  'check',
-  'file',
-  'cancel',
-  'reopen',
-  'approve',
-  'reject',
+const HEADERS = [
+  { key: 'ref', header: 'Job' },
+  { key: 'client_id', header: 'Client' },
+  { key: 'branch_id', header: 'Branch' },
+  { key: 'direction', header: 'Direction' },
+  { key: 'mode', header: 'Mode' },
+  { key: 'stage', header: 'Stage' },
+  { key: 'role_code', header: 'Role' },
 ];
 
 export function WaitingPage() {
   const { currentUserId, currentUser } = useUser();
-
-  const [selectedAction, setSelectedAction] = useState('prepare');
-  const [data, setData] = useState<WaitingResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
-  useEffect(() => {
-    if (currentUserId === null) {
-      return;
-    }
+  const {
+    actions,
+    selectedAction,
+    setSelectedAction,
+    loading: actionsLoading,
+    error: actionsError,
+  } = useActions(API_BASE_URL, { onlyWithFromStages: true });
 
-    setLoading(true);
-    setError(null);
+  const {
+    data,
+    jobs,
+    loading: jobsLoading,
+    error: jobsError,
+  } = useWaitingJobs(API_BASE_URL, currentUserId, selectedAction?.code ?? null);
 
-    fetch(
-      `${API_BASE_URL}/api/jobs/waiting?user_id=${currentUserId}&action=${selectedAction}`
-    )
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error('Failed to load waiting jobs');
-        }
+  const error = actionsError ?? jobsError;
 
-        return response.json();
-      })
-      .then((result: WaitingResponse) => {
-        setData(result);
-      })
-      .catch((error) => {
-        setError(error.message);
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-  }, [currentUserId, selectedAction, API_BASE_URL]);
-
-  const headers = [
-    { key: 'ref', header: 'Job' },
-    { key: 'client_id', header: 'Client' },
-    { key: 'branch_id', header: 'Branch' },
-    { key: 'direction', header: 'Direction' },
-    { key: 'mode', header: 'Mode' },
-    { key: 'stage', header: 'Stage' },
-    { key: 'role_code', header: 'Role' }
-  ];
-
-  const rows =
-    data?.jobs.map((job) => ({
-      id: String(job.id),
-      ref: job.ref,
-      client_id: job.client_id,
-      branch_id: job.branch_id,
-      direction: job.direction,
-      mode: job.mode,
-      stage: job.stage,
-      role_code: job.role_code,
-    })) ?? [];
+  const rows = jobs.map((job) => ({
+    id: String(job.id),
+    ref: job.ref,
+    client_id: job.client_id,
+    branch_id: job.branch_id,
+    direction: job.direction,
+    mode: job.mode,
+    stage: job.stage,
+    role_code: job.role_code,
+  }));
 
   return (
     <>
       <h1>Waiting</h1>
 
       <p style={{ marginTop: '0.5rem', marginBottom: '2rem' }}>
-        Jobs currently available to {currentUser?.name ?? 'selected user'}
+        Jobs currently available to{' '}
+        {currentUser?.name ?? 'selected user'}
       </p>
 
-      <div style={{ width: '250px', marginBottom: '2rem' }}>
-        <Dropdown
-          id="action-dropdown"
-          titleText="Action"
-          label="Select action"
-          items={actions}
-          selectedItem={selectedAction}
-          onChange={({ selectedItem }) => {
-            if (selectedItem) {
-              setSelectedAction(selectedItem);
-            }
-          }}
-        />
-      </div>
+      {actionsLoading && <InlineLoading description="Loading actions..." />}
 
-      {loading && (
+      {!actionsLoading && (
+        <div style={{ width: '250px', marginBottom: '2rem' }}>
+          <Dropdown
+            id="action-dropdown"
+            titleText="Action"
+            label="Select action"
+            items={actions}
+            itemToString={(action) => (action ? action.code : '')}
+            selectedItem={selectedAction}
+            onChange={({ selectedItem }) =>
+              setSelectedAction(selectedItem ?? null)
+            }
+          />
+        </div>
+      )}
+
+      {jobsLoading && (
         <InlineLoading description="Loading waiting jobs..." />
       )}
 
       {error && (
-        <InlineNotification
-          kind="error"
-          title="Unable to load jobs"
-          subtitle={error}
-        />
+        <div style={{ marginBottom: '1rem' }}>
+          <InlineNotification
+            kind="error"
+            title="Unable to load data"
+            subtitle={error}
+          />
+        </div>
       )}
 
-      {!loading && !error && data && (
+      {!jobsLoading && !error && data && selectedAction && (
         <>
           <p style={{ marginBottom: '1rem' }}>
             Found <strong>{data.count}</strong> job(s) for action{' '}
-            <strong>{data.action}</strong>
+            <strong>{selectedAction.code}</strong>
+            {selectedAction.approvals_required > 0 && (
+              <>
+                {' '}— requires {selectedAction.approvals_required} approval(s)
+              </>
+            )}
           </p>
 
-          <DataTable rows={rows} headers={headers}>
-            {({
-              rows,
-              headers,
-              getTableProps,
-              getHeaderProps,
-              getRowProps,
-            }) => (
-              <TableContainer title="Available jobs">
-                <Table {...getTableProps()}>
-                  <TableHead>
-                    <TableRow>
-                      {headers.map((header) => (
-                        <TableHeader
-                          {...getHeaderProps({
-                            header,
-                          })}
-                        >
-                          {header.header}
-                        </TableHeader>
-                      ))}
-                    </TableRow>
-                  </TableHead>
-
-                  <TableBody>
-                    {rows.map((row) => (
-                      <TableRow
-                        {...getRowProps({
-                          row,
-                        })}
-                      >
-                        {row.cells.map((cell) => (
-                          <TableCell key={cell.id}>
-                            {cell.info.header === 'stage' ? (
-                              <Tag type="blue">
-                                {String(cell.value)}
-                              </Tag>
-                            ) : (
-                              String(cell.value ?? '')
-                            )}
-                          </TableCell>
-                        ))}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            )}
-          </DataTable>
+          <JobsTable
+            title="Available jobs"
+            headers={HEADERS}
+            rows={rows}
+            onRowClick={(id) =>
+              navigate(`/jobs/${id}`, {
+                state: {
+                  action: selectedAction.code,
+                  approvalsRequired: selectedAction.approvals_required,
+                  from: 'waiting',
+                },
+              })
+            }
+          />
         </>
       )}
     </>

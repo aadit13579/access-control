@@ -6,6 +6,7 @@ import { JobDetailsPage } from './pages/JobDetailsPage';
 import { WaitingPage } from './pages/WaitingPage';
 import { AuthorizationPage } from './pages/AuthorizationPage';
 import { GrantsPage } from './pages/GrantsPage';
+import { ApprovalsPage } from './pages/ApprovalsPage';
 
 function App() {
   return (
@@ -20,6 +21,7 @@ function App() {
           <Route path="/waiting" element={<WaitingPage />} />
           <Route path="/authorization" element={<AuthorizationPage />} />
           <Route path='/grants' element={<GrantsPage />}/>
+          <Route path="/approvals" element={<ApprovalsPage />}/>
         </Routes>
       </main>
     </BrowserRouter>

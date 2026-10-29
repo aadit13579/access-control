@@ -1,152 +1,94 @@
-import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useState } from 'react';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Button, Tag } from '@carbon/react';
 
-import {
-  Button,
-  InlineLoading,
-  InlineNotification,
-  Tag,
-  Tile,
-} from '@carbon/react';
+import { useUser } from '../context/UserContext';
+import { useJobHistory } from '../hooks/useJobHistory';
+import { useActions } from '../hooks/useActions';
+import { StatusNotifications } from '../components/StatusNotifications';
+import { JobHistory } from '../components/JobHistory';
+import { JobActionPanel } from '../components/JobActionPanel';
+import type { Action } from '../types';
 
-type HistoryItem = {
-  id: number;
-  actor_id: number;
-  actor_name: string;
-  action: string;
-  from_stage: string | null;
-  to_stage: string | null;
-  outcome: string;
-  grant_id: number | null;
-  reason: string | null;
-  at: string;
-};
-
-type HistoryResponse = {
-  job_id: number;
-  history: HistoryItem[];
-};
+type LocationState = { action?: string; from?: string };
 
 export function JobDetailsPage() {
   const { jobId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const { currentUserId, currentUser } = useUser();
 
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+  const locationState = location.state as LocationState | null;
 
-  const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { history, loading, error, setError, reload } = useJobHistory(
+    API_BASE_URL,
+    jobId
+  );
 
-  useEffect(() => {
-    if (!jobId) {
-      return;
-    }
+  const { actions, selectedAction, setSelectedAction } = useActions(
+    API_BASE_URL,
+    { preselectCode: locationState?.action }
+  );
 
-    setLoading(true);
-    setError(null);
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [pageSuccess, setPageSuccess] = useState<string | null>(null);
 
-    fetch(`${API_BASE_URL}/api/jobs/${jobId}/history`)
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error('Failed to load job history');
-        }
+  const latestHistory = history.length > 0 ? history[history.length - 1] : null;
+  const currentStage =
+    latestHistory?.to_stage ?? latestHistory?.from_stage ?? null;
 
-        return response.json();
-      })
-      .then((result: HistoryResponse) => {
-        setHistory(result.history);
-      })
-      .catch((error) => {
-        setError(error.message);
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-  }, [jobId, API_BASE_URL]);
+  const backPath =
+    locationState?.from === 'waiting' ? '/waiting' : '/jobs';
 
   return (
     <>
-      <Button
-        kind="ghost"
-        onClick={() => navigate('/jobs')}
-      >
-        Back to jobs
+      <Button kind="ghost" onClick={() => navigate(backPath)}>
+        Back
       </Button>
 
-      <h1 style={{ marginTop: '1rem' }}>
-        Job {jobId}
-      </h1>
+      <h1 style={{ marginTop: '1rem' }}>Job {jobId}</h1>
 
-      <h3 style={{ marginTop: '2rem' }}>
-        History
-      </h3>
-
-      {loading && (
-        <InlineLoading description="Loading history..." />
-      )}
-
-      {error && (
-        <InlineNotification
-          kind="error"
-          title="Error"
-          subtitle={error}
-        />
-      )}
-
-      {!loading && history.length === 0 && (
-        <p style={{ marginTop: '1rem' }}>
-          No history found.
+      {currentStage && (
+        <p style={{ marginTop: '0.5rem' }}>
+          Current stage: <Tag type="blue">{currentStage}</Tag>
         </p>
       )}
 
-      {history.map((item) => (
-        <Tile
-          key={item.id}
-          style={{
-            marginTop: '1rem',
-            maxWidth: '800px',
-          }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
+      <StatusNotifications
+        error={error ?? pageError}
+        success={pageSuccess}
+      />
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0, 2fr) minmax(320px, 1fr)',
+          gap: '2rem',
+          marginTop: '2rem',
+          alignItems: 'start',
+        }}
+      >
+        <JobHistory history={history} loading={loading} />
+
+        <aside>
+          <JobActionPanel
+            actions={actions}
+            selectedAction={selectedAction}
+            actorName={currentUser?.name}
+            userId={currentUserId}
+            jobId={jobId ?? ''}
+            apiBaseUrl={API_BASE_URL}
+            onActionSelect={(action: Action | null) => {
+              setSelectedAction(action);
+              setPageError(null);
+              setPageSuccess(null);
+              setError(null);
             }}
-          >
-            <strong>{item.actor_name}</strong>
-
-            <Tag
-              type={
-                item.outcome === 'allowed'
-                  ? 'green'
-                  : 'red'
-              }
-            >
-              {item.action}
-            </Tag>
-          </div>
-
-          <p style={{ marginTop: '0.75rem' }}>
-            {item.from_stage ?? '-'}
-            {' → '}
-            {item.to_stage ?? '-'}
-          </p>
-
-          {item.reason && (
-            <p style={{ marginTop: '0.5rem' }}>
-              {item.reason}
-            </p>
-          )}
-
-          <p style={{ marginTop: '0.5rem' }}>
-            Grant #{item.grant_id ?? '-'}
-          </p>
-
-          <p>
-            {new Date(item.at).toLocaleString()}
-          </p>
-        </Tile>
-      ))}
+            onActionSuccess={reload}
+          />
+        </aside>
+      </div>
     </>
   );
 }

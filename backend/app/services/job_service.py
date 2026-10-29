@@ -1,22 +1,19 @@
-# app/services/job_service.py
 """
 Shared helpers for job-related operations.
 
-These functions encapsulate reusable DB logic consumed by multiple
-route handlers (actions, approvals, history).
+Encapsulates reusable database logic consumed by action, approval, and history route handlers.
 """
 
+from typing import Any
+
 from fastapi import HTTPException
-from psycopg import Connection
+from psycopg import Connection, Cursor
 
 from app.services.auth_service import authorize_user
 
 
-def get_approval_requirement(cur, action: str):
-    """
-    Return the approval rule for an action, or None if the action does
-    not require approval.
-    """
+def get_approval_requirement(cur: Cursor[Any], action: str) -> dict[str, Any] | None:
+    """Return the approval rule for an action, or None if approval is not required."""
     cur.execute(
         """
         SELECT action, approvals_required
@@ -29,17 +26,17 @@ def get_approval_requirement(cur, action: str):
 
 
 def record_job_event(
-    cur,
+    cur: Cursor[Any],
     *,
     job_id: int,
     actor_id: int,
     action: str,
-    from_stage,
-    to_stage,
+    from_stage: str | None,
+    to_stage: str | None,
     outcome: str,
     grant_id: int | None,
     reason: str | None,
-):
+) -> None:
     """Insert an immutable audit row into job_events."""
     cur.execute(
         """
@@ -70,21 +67,20 @@ def record_job_event(
 
 def execute_transition(
     *,
-    cur,
+    cur: Cursor[Any],
     db: Connection,
     job_id: int,
     user_id: int,
     action: str,
     reason: str | None,
-    authorization: dict,
-):
+    authorization: dict[str, Any],
+) -> dict[str, Any]:
     """
-    Execute one state-changing action after authorization has already
-    succeeded.
+    Execute a state-changing action after authorization has succeeded.
 
-    The job row is locked before changing it and version is incremented.
+    Locks the job row with FOR UPDATE, re-authorizes to prevent race conditions,
+    advances the stage, increments version, and writes the audit event.
     """
-
     cur.execute(
         """
         SELECT
@@ -100,7 +96,6 @@ def execute_transition(
         """,
         (action, job_id),
     )
-
     row = cur.fetchone()
 
     if not row:
@@ -112,17 +107,13 @@ def execute_transition(
     if row["to_stage"] is None:
         raise HTTPException(
             status_code=400,
-            detail=(
-                f"Action '{action}' is not configured as a "
-                "state-changing action."
-            ),
+            detail=f"Action '{action}' is not configured as a state-changing action.",
         )
 
     from_stage = row["stage"]
     to_stage = row["to_stage"]
 
-    # Re-authorize after locking the job so that a concurrent state
-    # change cannot make the earlier decision stale.
+    # Re-authorize after locking the job row to prevent stale decisions
     fresh_decision = authorize_user(
         db=db,
         user_id=user_id,

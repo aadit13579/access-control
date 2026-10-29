@@ -1,5 +1,4 @@
-# app/routers/auth.py
-"""POST /api/{user_id} — single authorization check."""
+"""GET /api/users — list active users."""
 
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg import Connection
@@ -11,33 +10,23 @@ router = APIRouter(prefix="/api", tags=["Users"])
 
 @router.get("/users")
 def get_all_users(
-    db: Connection = Depends(get_db)
+    db: Connection = Depends(get_db),
 ):
-    try:
-        with db.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, name, kind, client_id
-                FROM users
-                WHERE is_active = true;
-                """
-            )
-            action_row = cur.fetchall()
+    with db.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, name, kind, client_id
+            FROM users
+            WHERE is_active = true
+            ORDER BY id;
+            """
+        )
+        users = cur.fetchall()
 
-        if not action_row:
-            raise HTTPException(status_code=404, detail="Users not found or inactive.")
+    if not users:
+        raise HTTPException(status_code=404, detail="No active users found.")
 
-        result = {
-            "status": "success",
-            "data": action_row,
-        }
-
-        return result
-
-    except HTTPException:
-        raise
-    except Exception:
-        db.rollback()
-        raise
-    
-
+    return {
+        "status": "success",
+        "data": users,
+    }

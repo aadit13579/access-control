@@ -1,11 +1,10 @@
-# app/routers/grants_create.py
-"""POST /api/grants/ — create a new role grant."""
+"""POST /api/grants/ — create a new scoped role grant."""
 
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg import Connection
 
-from app.models import GrantRoleRequest
 from app.database import get_db
+from app.models import GrantRoleRequest
 
 router = APIRouter(prefix="/api/grants", tags=["Grants"])
 
@@ -13,43 +12,22 @@ router = APIRouter(prefix="/api/grants", tags=["Grants"])
 @router.post("/")
 def create_grant(
     payload: GrantRoleRequest,
-    db: Connection = Depends(get_db)
+    db: Connection = Depends(get_db),
 ):
+    if payload.manager_id == payload.target_user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Users may not grant roles to themselves.",
+        )
+
+    c_all = payload.client_id is None
+    b_all = payload.branch_id is None
+    d_all = payload.direction is None
+    m_all = payload.mode is None
+
     try:
         with db.cursor() as cur:
-
-            # ---------------------------------------------------------
-            # 1. Work out the scope being requested.
-            #
-            # If an ID/value is None, that dimension means ALL.
-            # ---------------------------------------------------------
-            c_all = payload.client_id is None
-            b_all = payload.branch_id is None
-            d_all = payload.direction is None
-            m_all = payload.mode is None
-            if payload.manager_id == payload.target_user_id:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Users may not grant roles to themselves."
-                )
-
-            # ---------------------------------------------------------
-            # 2. Check:
-            #    a) manager has manage_grants permission
-            #    b) manager's role may grant the requested role
-            #    c) manager's own grant covers the scope being delegated
-            #
-            # Example:
-            # Manager has Client 1 only:
-            #   - may grant Client 1
-            #   - may NOT grant Client 2
-            #   - may NOT grant ALL clients
-            #
-            # Manager has ALL clients:
-            #   - may grant Client 1
-            #   - may grant Client 2
-            #   - may grant ALL clients
-            # ---------------------------------------------------------
+            # 1. Check authority and delegation scope
             auth_query = """
             SELECT EXISTS (
                 SELECT 1
@@ -61,30 +39,13 @@ def create_grant(
                 WHERE g.user_id = %s
                   AND rp.action = 'manage_grants'
                   AND rga.grantable_role = %s
-
                   AND CURRENT_TIMESTAMP >= g.valid_from
                   AND CURRENT_TIMESTAMP < g.valid_to
                   AND g.revoked_by IS NULL
-
-                  AND (
-                      g.client_all
-                      OR (%s = FALSE AND g.client_id = %s)
-                  )
-
-                  AND (
-                      g.branch_all
-                      OR (%s = FALSE AND g.branch_id = %s)
-                  )
-
-                  AND (
-                      g.direction_all
-                      OR (%s = FALSE AND g.direction = %s)
-                  )
-
-                  AND (
-                      g.mode_all
-                      OR (%s = FALSE AND g.mode = %s)
-                  )
+                  AND (g.client_all OR (%s = FALSE AND g.client_id = %s))
+                  AND (g.branch_all OR (%s = FALSE AND g.branch_id = %s))
+                  AND (g.direction_all OR (%s = FALSE AND g.direction = %s))
+                  AND (g.mode_all OR (%s = FALSE AND g.mode = %s))
             );
             """
 
@@ -93,19 +54,15 @@ def create_grant(
                 (
                     payload.manager_id,
                     payload.role_code,
-
                     c_all,
                     payload.client_id,
-
                     b_all,
                     payload.branch_id,
-
                     d_all,
                     payload.direction,
-
                     m_all,
                     payload.mode,
-                )
+                ),
             )
 
             is_authorized = cur.fetchone()["exists"]
@@ -117,13 +74,10 @@ def create_grant(
                         "Manager lacks authority to grant this role "
                         "or the requested scope is broader than the "
                         "manager's own active grant."
-                    )
+                    ),
                 )
 
-            # ---------------------------------------------------------
-            # 3. Idempotency check:
-            #    do not create the exact same active grant twice.
-            # ---------------------------------------------------------
+            # 2. Idempotency check: avoid duplicate active grants
             exist_query = """
             SELECT id
             FROM grants
@@ -147,7 +101,7 @@ def create_grant(
                     payload.branch_id,
                     payload.direction,
                     payload.mode,
-                )
+                ),
             )
 
             existing_grant = cur.fetchone()
@@ -159,13 +113,7 @@ def create_grant(
                     "grant_id": existing_grant["id"],
                 }
 
-            # ---------------------------------------------------------
-            # 4. Create the grant.
-            #
-            # Do NOT return valid_to here because active grants may use
-            # PostgreSQL's special timestamp value 'infinity', which
-            # Python datetime cannot represent.
-            # ---------------------------------------------------------
+            # 3. Create the grant
             insert_query = """
             INSERT INTO grants (
                 user_id,
@@ -189,21 +137,7 @@ def create_grant(
                 %s, %s,
                 %s, %s
             )
-            RETURNING
-                id,
-                user_id,
-                role_code,
-                client_id,
-                client_all,
-                branch_id,
-                branch_all,
-                direction,
-                direction_all,
-                mode,
-                mode_all,
-                valid_from,
-                granted_by,
-                reason;
+            RETURNING id;
             """
 
             cur.execute(
@@ -211,33 +145,22 @@ def create_grant(
                 (
                     payload.target_user_id,
                     payload.role_code,
-
                     payload.client_id,
                     c_all,
-
                     payload.branch_id,
                     b_all,
-
                     payload.direction,
                     d_all,
-
                     payload.mode,
                     m_all,
-
                     payload.manager_id,
                     payload.reason,
-                )
+                ),
             )
 
             grant = cur.fetchone()
 
-            # ---------------------------------------------------------
-            # 5. Write immutable grant history.
-            #
-            # PostgreSQL copies valid_to directly from grants into
-            # grant_events. This avoids sending 'infinity' through
-            # Python/psycopg.
-            # ---------------------------------------------------------
+            # 4. Write immutable audit history
             event_query = """
             INSERT INTO grant_events (
                 grant_id,
@@ -279,8 +202,6 @@ def create_grant(
             """
 
             cur.execute(event_query, (grant["id"],))
-
-            # Grant creation + audit event succeed together.
             db.commit()
 
             return {
@@ -291,7 +212,6 @@ def create_grant(
     except HTTPException:
         db.rollback()
         raise
-
     except Exception:
         db.rollback()
         raise

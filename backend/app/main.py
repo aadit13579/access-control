@@ -1,34 +1,38 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
+
 from app.database import db_pool
 from app.routers import (
     auth,
-    get_user,
+    get_actions,
     get_all_users,
-    jobs_waiting,
+    get_approvals,
+    get_roles,
+    get_user,
+    grants_create,
+    grants_revoke,
     jobs_action,
     jobs_approvals,
     jobs_history,
-    grants_create,
-    grants_revoke,
-    get_roles,
+    jobs_waiting,
 )
 
 
-# Manage the lifecycle of the DB connection pool
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Open the connection pool before the app starts accepting requests
+    """Manage the lifecycle of the database connection pool."""
     db_pool.open()
     yield
-    # Close the pool when the app shuts down
     db_pool.close()
 
+
 app = FastAPI(
-    title="NFPL Access Control API", 
+    title="NFPL Access Control API",
     version="1.0.0",
-    lifespan=lifespan
+    description="Role-based access control service with scoped grants, SoD, and approvals.",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -39,7 +43,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register routers
+# Register route modules
 app.include_router(auth.router)
 app.include_router(get_user.router)
 app.include_router(get_all_users.router)
@@ -50,6 +54,9 @@ app.include_router(jobs_history.router)
 app.include_router(grants_create.router)
 app.include_router(grants_revoke.router)
 app.include_router(get_roles.router)
+app.include_router(get_actions.router)
+app.include_router(get_approvals.router)
+
 
 @app.get("/")
 def health_check():

@@ -1,11 +1,10 @@
-# app/routers/grants_revoke.py
 """POST /api/grants/{grant_id}/revoke — revoke an active grant."""
 
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg import Connection
 
-from app.models import RevokeGrantRequest
 from app.database import get_db
+from app.models import RevokeGrantRequest
 
 router = APIRouter(prefix="/api/grants", tags=["Grants"])
 
@@ -14,17 +13,11 @@ router = APIRouter(prefix="/api/grants", tags=["Grants"])
 def revoke_grant(
     grant_id: int,
     payload: RevokeGrantRequest,
-    db: Connection = Depends(get_db)
+    db: Connection = Depends(get_db),
 ):
     try:
         with db.cursor() as cur:
-
-            # ---------------------------------------------------------
-            # 1. Get and lock the grant being revoked.
-            #
-            # Do not SELECT valid_to directly because an active grant
-            # may contain PostgreSQL 'infinity'.
-            # ---------------------------------------------------------
+            # 1. Lock and check active status
             grant_query = """
             SELECT
                 id,
@@ -55,7 +48,7 @@ def revoke_grant(
             if not grant:
                 raise HTTPException(
                     status_code=404,
-                    detail="Grant not found."
+                    detail="Grant not found.",
                 )
 
             if not grant["is_active"]:
@@ -65,12 +58,7 @@ def revoke_grant(
                     "grant_id": grant_id,
                 }
 
-            # ---------------------------------------------------------
-            # 2. Check:
-            #    a) manager may manage grants
-            #    b) manager's role may manage this target role
-            #    c) target grant lies within manager's own scope
-            # ---------------------------------------------------------
+            # 2. Check manager authority and scope coverage
             auth_query = """
             SELECT EXISTS (
                 SELECT 1
@@ -82,30 +70,13 @@ def revoke_grant(
                 WHERE g.user_id = %s
                   AND rp.action = 'manage_grants'
                   AND rga.grantable_role = %s
-
                   AND CURRENT_TIMESTAMP >= g.valid_from
                   AND CURRENT_TIMESTAMP < g.valid_to
                   AND g.revoked_by IS NULL
-
-                  AND (
-                      g.client_all
-                      OR (%s = FALSE AND g.client_id = %s)
-                  )
-
-                  AND (
-                      g.branch_all
-                      OR (%s = FALSE AND g.branch_id = %s)
-                  )
-
-                  AND (
-                      g.direction_all
-                      OR (%s = FALSE AND g.direction = %s)
-                  )
-
-                  AND (
-                      g.mode_all
-                      OR (%s = FALSE AND g.mode = %s)
-                  )
+                  AND (g.client_all OR (%s = FALSE AND g.client_id = %s))
+                  AND (g.branch_all OR (%s = FALSE AND g.branch_id = %s))
+                  AND (g.direction_all OR (%s = FALSE AND g.direction = %s))
+                  AND (g.mode_all OR (%s = FALSE AND g.mode = %s))
             );
             """
 
@@ -114,19 +85,15 @@ def revoke_grant(
                 (
                     payload.manager_id,
                     grant["role_code"],
-
                     grant["client_all"],
                     grant["client_id"],
-
                     grant["branch_all"],
                     grant["branch_id"],
-
                     grant["direction_all"],
                     grant["direction"],
-
                     grant["mode_all"],
                     grant["mode"],
-                )
+                ),
             )
 
             is_authorized = cur.fetchone()["exists"]
@@ -137,15 +104,10 @@ def revoke_grant(
                     detail=(
                         "Manager lacks authority to revoke this role "
                         "or the grant is outside the manager's own scope."
-                    )
+                    ),
                 )
 
-            # ---------------------------------------------------------
-            # 3. Revoke the grant immediately.
-            #
-            # After this UPDATE, valid_to is a normal finite timestamp,
-            # so it is safe for psycopg/Python to read it.
-            # ---------------------------------------------------------
+            # 3. Revoke the grant immediately
             revoke_query = """
             UPDATE grants
             SET
@@ -169,19 +131,10 @@ def revoke_grant(
                 revoked_by;
             """
 
-            cur.execute(
-                revoke_query,
-                (
-                    payload.manager_id,
-                    grant_id,
-                )
-            )
-
+            cur.execute(revoke_query, (payload.manager_id, grant_id))
             revoked_grant = cur.fetchone()
 
-            # ---------------------------------------------------------
-            # 4. Record immutable revocation history.
-            # ---------------------------------------------------------
+            # 4. Record immutable revocation history
             event_query = """
             INSERT INTO grant_events (
                 grant_id,
@@ -218,28 +171,21 @@ def revoke_grant(
                     revoked_grant["id"],
                     revoked_grant["user_id"],
                     revoked_grant["role_code"],
-
                     revoked_grant["client_id"],
                     revoked_grant["client_all"],
-
                     revoked_grant["branch_id"],
                     revoked_grant["branch_all"],
-
                     revoked_grant["direction"],
                     revoked_grant["direction_all"],
-
                     revoked_grant["mode"],
                     revoked_grant["mode_all"],
-
                     revoked_grant["valid_from"],
                     revoked_grant["valid_to"],
-
                     payload.manager_id,
                     payload.reason,
-                )
+                ),
             )
 
-            # Revocation + audit event succeed together.
             db.commit()
 
             return {
@@ -253,7 +199,6 @@ def revoke_grant(
     except HTTPException:
         db.rollback()
         raise
-
     except Exception:
         db.rollback()
         raise

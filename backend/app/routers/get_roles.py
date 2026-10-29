@@ -1,3 +1,7 @@
+"""GET /api/users/{user_id}/permissions — list active roles and permissions for a user."""
+
+from collections import defaultdict
+
 from fastapi import APIRouter, Depends
 from psycopg import Connection
 
@@ -22,27 +26,20 @@ def get_user_permissions(
             JOIN grants g
                 ON g.role_code = rp.role_code
             WHERE g.user_id = %s
-            AND g.valid_from <= NOW()
-            AND g.valid_to > NOW()
+              AND g.valid_from <= NOW()
+              AND g.valid_to > NOW()
             ORDER BY rp.role_code, rp.action;
             """,
             (user_id,),
         )
-
         rows = cur.fetchall()
 
-    roles: dict[str, list[str]] = {}
+    roles: dict[str, list[str]] = defaultdict(list)
     all_permissions: set[str] = set()
 
     for row in rows:
-        role_code = row["role_code"]
-        action = row["action"]
-
-        if role_code not in roles:
-            roles[role_code] = []
-
-        roles[role_code].append(action)
-        all_permissions.add(action)
+        roles[row["role_code"]].append(row["action"])
+        all_permissions.add(row["action"])
 
     return {
         "user_id": user_id,

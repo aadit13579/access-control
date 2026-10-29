@@ -1,4 +1,3 @@
-# app/routers/jobs_approvals.py
 """
 Approval workflow endpoints:
   - POST /api/jobs/{job_id}/approvals/request
@@ -8,12 +7,12 @@ Approval workflow endpoints:
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg import Connection
 
-from app.models import ApprovalRequest, ApprovalDecisionRequest
 from app.database import get_db
+from app.models import ApprovalDecisionRequest, ApprovalRequest
 from app.services.auth_service import authorize_user
 from app.services.job_service import (
-    get_approval_requirement,
     execute_transition,
+    get_approval_requirement,
 )
 
 router = APIRouter(prefix="/api/jobs", tags=["Jobs"])
@@ -26,21 +25,14 @@ def request_approval(
     db: Connection = Depends(get_db),
 ):
     """
-    Create a pending approval request for an action that is configured
-    in action_approval_rules.
+    Create a pending approval request for an action configured in action_approval_rules.
 
-    The requester must already be authorized to perform the action.
-    No job state is changed at this point.
+    The requester must already be authorized. No job state changes at this point.
     """
-
     try:
         with db.cursor() as cur:
-
-            # 1. Confirm that this action requires approval.
-            approval_rule = get_approval_requirement(
-                cur,
-                payload.action,
-            )
+            # 1. Confirm that this action requires approval
+            approval_rule = get_approval_requirement(cur, payload.action)
 
             if not approval_rule:
                 raise HTTPException(
@@ -51,18 +43,13 @@ def request_approval(
                     ),
                 )
 
-            # The current approvals table supports one independent
-            # decision per approval request.
             if approval_rule["approvals_required"] != 1:
                 raise HTTPException(
                     status_code=500,
-                    detail=(
-                        "Current approval workflow supports exactly "
-                        "one independent approver."
-                    ),
+                    detail="Current approval workflow supports exactly one independent approver.",
                 )
 
-            # 2. Requester must actually be authorized for the action.
+            # 2. Requester must be authorized for the action
             decision = authorize_user(
                 db=db,
                 user_id=payload.user_id,
@@ -76,7 +63,7 @@ def request_approval(
                     detail=decision,
                 )
 
-            # 3. Avoid duplicate pending requests by the same requester.
+            # 3. Deduplicate pending requests by the same requester
             cur.execute(
                 """
                 SELECT id
@@ -88,13 +75,8 @@ def request_approval(
                 ORDER BY id DESC
                 LIMIT 1;
                 """,
-                (
-                    job_id,
-                    payload.action,
-                    payload.user_id,
-                ),
+                (job_id, payload.action, payload.user_id),
             )
-
             existing = cur.fetchone()
 
             if existing:
@@ -104,7 +86,7 @@ def request_approval(
                     "approval_id": existing["id"],
                 }
 
-            # 4. Create the request.
+            # 4. Create the request
             cur.execute(
                 """
                 INSERT INTO approvals (
@@ -124,9 +106,7 @@ def request_approval(
                     payload.reason,
                 ),
             )
-
             approval = cur.fetchone()
-
             db.commit()
 
             return {
@@ -138,7 +118,6 @@ def request_approval(
     except HTTPException:
         db.rollback()
         raise
-
     except Exception:
         db.rollback()
         raise
@@ -154,36 +133,23 @@ def decide_approval(
     A second authorized user approves or rejects the request.
 
     If approved:
-      1. approver must be different from requester
-      2. approver must independently be authorized for the same action
-      3. requester is re-authorized
-      4. job transition is executed immediately
-      5. job_event is written
-
-    Approval decision + job transition + audit event are atomic.
+      1. Approver must differ from requester (two-person rule)
+      2. Approver must independently be authorized to approve/reject
+      3. Requester is re-authorized at decision time
+      4. Job transition executes atomically
     """
-
     try:
         with db.cursor() as cur:
-
-            # 1. Lock the approval request.
+            # 1. Lock the approval request
             cur.execute(
                 """
-                SELECT
-                    id,
-                    job_id,
-                    action,
-                    requested_by,
-                    reason,
-                    decided_by,
-                    status
+                SELECT id, job_id, action, requested_by, reason, decided_by, status
                 FROM approvals
                 WHERE id = %s
                 FOR UPDATE;
                 """,
                 (approval_id,),
             )
-
             approval = cur.fetchone()
 
             if not approval:
@@ -195,25 +161,19 @@ def decide_approval(
             if approval["status"] != "pending":
                 raise HTTPException(
                     status_code=409,
-                    detail=(
-                        f"Approval request has already been "
-                        f"{approval['status']}."
-                    ),
+                    detail=f"Approval request has already been {approval['status']}.",
                 )
 
-            # 2. Enforce the two-person rule.
+            # 2. Enforce two-person rule
             if payload.user_id == approval["requested_by"]:
                 raise HTTPException(
                     status_code=403,
                     detail="Requester cannot decide their own approval request.",
                 )
 
-            # 3. The second person must independently have authority
-            #    for the same action on the same job.
+            # 3. Approver must hold approve/reject permission
             decision_action = (
-                "approve"
-                if payload.decision == "approved"
-                else "reject"
+                "approve" if payload.decision == "approved" else "reject"
             )
 
             approver_decision = authorize_user(
@@ -232,24 +192,16 @@ def decide_approval(
                     },
                 )
 
-            # ---------------------------------------------------------
-            # Rejection: record decision, but do not change the job.
-            # ---------------------------------------------------------
+            # Rejection: record decision without changing job
             if payload.decision == "rejected":
                 cur.execute(
                     """
                     UPDATE approvals
-                    SET
-                        status = 'rejected',
-                        decided_by = %s
+                    SET status = 'rejected', decided_by = %s
                     WHERE id = %s;
                     """,
-                    (
-                        payload.user_id,
-                        approval_id,
-                    ),
+                    (payload.user_id, approval_id),
                 )
-
                 db.commit()
 
                 return {
@@ -261,9 +213,7 @@ def decide_approval(
                     "message": "Approval request rejected. Job was not changed.",
                 }
 
-            # ---------------------------------------------------------
-            # Approval: requester must STILL be authorized now.
-            # ---------------------------------------------------------
+            # Approval: requester must STILL be authorized
             requester_decision = authorize_user(
                 db=db,
                 user_id=approval["requested_by"],
@@ -283,22 +233,17 @@ def decide_approval(
                     },
                 )
 
-            # 4. Mark the approval approved.
+            # 4. Mark approved
             cur.execute(
                 """
                 UPDATE approvals
-                SET
-                    status = 'approved',
-                    decided_by = %s
+                SET status = 'approved', decided_by = %s
                 WHERE id = %s;
                 """,
-                (
-                    payload.user_id,
-                    approval_id,
-                ),
+                (payload.user_id, approval_id),
             )
 
-            # 5. Execute the action immediately in the same transaction.
+            # 5. Execute state transition atomically
             transition = execute_transition(
                 cur=cur,
                 db=db,
@@ -323,7 +268,6 @@ def decide_approval(
     except HTTPException:
         db.rollback()
         raise
-
     except Exception:
         db.rollback()
         raise

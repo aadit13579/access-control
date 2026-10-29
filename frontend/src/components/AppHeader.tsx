@@ -19,6 +19,9 @@ export function AppHeader() {
 } = useUser();
 
   const canManageGrants = permissions.includes('manage_grants');
+  const canHandleApprovals =
+  permissions.includes('approve') ||
+  permissions.includes('reject');
   return (
     <Header aria-label="Access Control Service">
       <HeaderName as={Link} to="/" prefix="">
@@ -40,6 +43,15 @@ export function AppHeader() {
         {canManageGrants && (
           <HeaderMenuItem as={Link} to="/grants">
             Grants
+          </HeaderMenuItem>
+        )}
+        
+        {canHandleApprovals && (
+          <HeaderMenuItem
+            as={Link}
+            to="/approvals"
+          >
+            Approvals
           </HeaderMenuItem>
         )}
 

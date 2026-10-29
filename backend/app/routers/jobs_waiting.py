@@ -1,5 +1,4 @@
-# app/routers/jobs_waiting.py
-"""GET /api/jobs/waiting — list jobs a user may act on."""
+"""GET /api/jobs/waiting — list jobs an eligible user may act on."""
 
 from fastapi import APIRouter, Depends
 from psycopg import Connection
@@ -17,21 +16,13 @@ def list_jobs_waiting(
     db: Connection = Depends(get_db),
 ):
     """
-    Return only jobs for which the canonical authorization engine says
+    Return only jobs for which the canonical authorization engine confirms
     the user may currently perform `action`.
     """
-
     with db.cursor() as cur:
         cur.execute(
             """
-            SELECT
-                id,
-                ref,
-                client_id,
-                branch_id,
-                direction,
-                mode,
-                stage
+            SELECT id, ref, client_id, branch_id, direction, mode, stage
             FROM jobs
             ORDER BY id;
             """

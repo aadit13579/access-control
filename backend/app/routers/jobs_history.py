@@ -1,12 +1,13 @@
-# app/routers/jobs_history.py
 """
-GET /api/jobs/{job_id}/history     — audit trail for a job
-GET /api/jobs/{job_id}/who-could-act — historical access query
+Job history and point-in-time audit query endpoints:
+  - GET /api/jobs/{job_id}/history       — audit trail for a job
+  - GET /api/jobs/{job_id}/who-could-act — historical access query
 """
+
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg import Connection
-from datetime import datetime
 
 from app.database import get_db
 
@@ -18,6 +19,7 @@ def job_history(
     job_id: int,
     db: Connection = Depends(get_db),
 ):
+    """Fetch the immutable audit trail of all actions and transitions for a job."""
     query = """
     SELECT
         je.id,
@@ -39,7 +41,6 @@ def job_history(
 
     with db.cursor() as cur:
         cur.execute(query, (job_id,))
-
         return {
             "job_id": job_id,
             "history": cur.fetchall(),
@@ -51,84 +52,46 @@ def who_could_act(
     job_id: int,
     action: str,
     at: datetime,
-    db: Connection = Depends(get_db)
+    db: Connection = Depends(get_db),
 ):
+    """
+    Historical point-in-time audit query to check which users held active grants
+    for a specific action on this job at timestamp `at`.
+    """
     with db.cursor() as cur:
-
-        # ---------------------------------------------------------
-        # 1. Get the job whose historical access we are checking
-        # ---------------------------------------------------------
+        # 1. Fetch the target job
         cur.execute(
             """
-            SELECT
-                id,
-                ref,
-                client_id,
-                branch_id,
-                direction,
-                mode,
-                stage
+            SELECT id, ref, client_id, branch_id, direction, mode, stage
             FROM jobs
             WHERE id = %s;
             """,
-            (job_id,)
+            (job_id,),
         )
-
         job = cur.fetchone()
 
         if not job:
             raise HTTPException(
                 status_code=404,
-                detail="Job not found."
+                detail="Job not found.",
             )
 
-        # ---------------------------------------------------------
-        # 2. Find users whose grants covered this job at that time
-        #
-        # grants.valid_from / valid_to already preserve the period
-        # during which the grant was effective.
-        # ---------------------------------------------------------
+        # 2. Reconstruct users whose grants and permissions were active at that point
         query = """
         SELECT DISTINCT
             u.id AS user_id,
             u.name AS user_name,
             g.id AS grant_id,
             g.role_code
-
         FROM grants g
-
         JOIN users u
           ON u.id = g.user_id
-
         WHERE %s >= g.valid_from
           AND %s < g.valid_to
-
-          AND (
-              g.client_all
-              OR g.client_id = %s
-          )
-
-          AND (
-              g.branch_all
-              OR g.branch_id = %s
-          )
-
-          AND (
-              g.direction_all
-              OR g.direction = %s
-          )
-
-          AND (
-              g.mode_all
-              OR g.mode = %s
-          )
-
-          -- -----------------------------------------------------
-          -- Historical role permission check
-          --
-          -- The latest permission change on/before the requested
-          -- timestamp must have been 'add'.
-          -- -----------------------------------------------------
+          AND (g.client_all OR g.client_id = %s)
+          AND (g.branch_all OR g.branch_id = %s)
+          AND (g.direction_all OR g.direction = %s)
+          AND (g.mode_all OR g.mode = %s)
           AND (
               SELECT rpl.change
               FROM role_permission_log rpl
@@ -138,7 +101,6 @@ def who_could_act(
               ORDER BY rpl.at DESC, rpl.id DESC
               LIMIT 1
           ) = 'add'
-
         ORDER BY u.id;
         """
 
@@ -147,17 +109,14 @@ def who_could_act(
             (
                 at,
                 at,
-
                 job["client_id"],
                 job["branch_id"],
                 job["direction"],
                 job["mode"],
-
                 action,
                 at,
-            )
+            ),
         )
-
         users = cur.fetchall()
 
         return {
